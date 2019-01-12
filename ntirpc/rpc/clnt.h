@@ -560,7 +560,6 @@ static inline void clnt_req_fill(struct clnt_req *cc, struct rpc_client *clnt,
 	cc->cc_reply.where = resultsp;
 	cc->cc_verf = _null_auth;
 
-	cc->cc_free_cb = (clnt_req_freer)__ntirpc_pkg_params.free_size_;
 	cc->cc_size = sizeof(*cc);
 	cc->cc_refcnt = 1;
 
