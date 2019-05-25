@@ -64,6 +64,7 @@
 
 #include "rpc_com.h"
 #include "strl.h"
+#include "rpc_dplx_internal.h"
 
 void
 thr_keyfree(void *k)
