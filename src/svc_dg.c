@@ -103,8 +103,10 @@ svc_dg_xprt_zalloc(size_t iosz)
 
 	/* Init SVCXPRT locks, etc */
 	rpc_dplx_rec_init(&su->su_dr);
-	/* Extra ref to match TCP */
+
+	/* Extra ref, svc_dg_recv will call DESTROY and RELEASE */
 	SVC_REF(&su->su_dr.xprt, SVC_REF_FLAG_NONE);
+
 	xdr_ioq_setup(&su->su_dr.ioq);
 	return (su);
 }
