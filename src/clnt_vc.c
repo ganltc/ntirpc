@@ -466,6 +466,7 @@ clnt_vc_destroy(CLIENT *clnt)
 		 */
 		if (clnt->cl_flags & CLNT_FLAG_LOCAL) {
 			/* Local client; destroy the xprt */
+			__warnx(TIRPC_DEBUG_FLAG_EPOLL, "clnt_vc_destroy: Local client; destroy the xprt");
 			SVC_DESTROY(&cx->cx_rec->xprt);
 		}
 		SVC_RELEASE(&cx->cx_rec->xprt, SVC_RELEASE_FLAG_NONE);

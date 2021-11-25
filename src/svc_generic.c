@@ -157,6 +157,10 @@ svc_tp_ncreate(void (*dispatch) (struct svc_req *req),
 		__warnx(TIRPC_DEBUG_FLAG_SVC,
 			"svc_tp_ncreate: Could not register prog %u vers %u on %s",
 			(unsigned)prognum, (unsigned)versnum, nconf->nc_netid);
+		__warnx(TIRPC_DEBUG_FLAG_EPOLL, 
+                        "svc_tp_ncreate: Could not register prog %u vers %u on %s",
+                        (unsigned)prognum, (unsigned)versnum, nconf->nc_netid);
+
 		SVC_DESTROY(xprt);
 		return (NULL);
 	}

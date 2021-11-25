@@ -78,8 +78,8 @@ tirpc_thread_name(const char *p)
 }
 
 tirpc_pkg_params __ntirpc_pkg_params = {
-	TIRPC_FLAG_NONE,
-	TIRPC_DEBUG_FLAG_NONE,
+	TIRPC_DEBUG_FLAG_DEFAULT,
+	TIRPC_DEBUG_FLAG_DEFAULT,
 	tirpc_thread_name,
 	warnx,
 };

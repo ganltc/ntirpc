@@ -200,6 +200,7 @@ svc_ioq_write(SVCXPRT *xprt, struct xdr_ioq *xioq, struct poolq_head *ifph)
 
 		if (rc < 0) {
 			/* IO failed, destroy rather than releasing */
+			__warnx(TIRPC_DEBUG_FLAG_EPOLL, "svc_ioq_write : IO failed, destroy rather than releasing");
 			SVC_DESTROY(xprt);
 		} else {
 			SVC_RELEASE(xprt, SVC_RELEASE_FLAG_NONE);

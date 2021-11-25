@@ -374,6 +374,7 @@ svc_xprt_shutdown()
 			 * SVC_DESTROY() decrements that reference.
 			 */
 			rwlock_unlock(&t->lock);
+			__warnx(TIRPC_DEBUG_FLAG_EPOLL, "svc_xprt_shutdown called!!");
 			SVC_DESTROY(&rec->xprt);
 			rwlock_wrlock(&t->lock);
 		}		/* curr partition */

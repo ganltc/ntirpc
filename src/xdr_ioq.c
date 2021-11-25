@@ -257,7 +257,7 @@ xdr_ioq_reset(struct xdr_ioq *xioq, u_int wh_pos)
 	}
 	xdr_ioq_uv_reset(xioq, uv);
 
-	__warnx(TIRPC_DEBUG_FLAG_XDR,
+	__warnx(TIRPC_DEBUG_FLAG_EPOLL,
 		"%s() xioq %p head %p wh_pos %d",
 		__func__, xioq, uv->v.vio_head, wh_pos);
 }

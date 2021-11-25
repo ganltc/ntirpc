@@ -364,6 +364,7 @@ svc_dg_recv(SVCXPRT *xprt)
 	/* Only after checking SVC_XPRT_FLAG_DESTROYED:
 	 * because SVC_DESTROY() has decremented already.
 	 */
+	__warnx(TIRPC_DEBUG_FLAG_EPOLL, "svc_dg_recv called !!");
 	SVC_DESTROY(xprt);
 	SVC_RELEASE(xprt, SVC_RELEASE_FLAG_NONE);
 	return (stat);
