@@ -77,7 +77,7 @@
 #endif
 #include "svc_ioq.h"
 
-extern int gss_seq_win;
+int gss_seq_win;
 #define SVC_VERSQUIET 0x0001	/* keep quiet about vers mismatch */
 #define version_keepquiet(xp) ((u_long)(xp)->xp_p3 & SVC_VERSQUIET)
 

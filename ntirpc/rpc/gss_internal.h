@@ -68,7 +68,7 @@ typedef gss_union_ctx_id_desc *gss_union_ctx_id_t;
 #define SVC_RPC_GSS_FLAG_NONE    0x0000
 #define SVC_RPC_GSS_FLAG_MSPAC   0x0001
 
-int gss_seq_win;
+extern int gss_seq_win;
 
 struct svc_rpc_gss_data {
 	struct opr_rbtree_node node_k;
