@@ -285,6 +285,7 @@ svc_dg_rendezvous(SVCXPRT *xprt)
                 __warnx(TIRPC_DEBUG_FLAG_ERROR,
                         "%s: Bad message sa_family is 0xffff",
                         __func__);
+		svc_dg_xprt_free(su);
                 return SVC_STAT(xprt);
         }
 
@@ -292,6 +293,7 @@ svc_dg_rendezvous(SVCXPRT *xprt)
                 __warnx(TIRPC_DEBUG_FLAG_ERROR,
                         "%s: Bad message rlen: %d",
                         __func__, rlen);
+		svc_dg_xprt_free(su);
                 return SVC_STAT(xprt);
         }
 
