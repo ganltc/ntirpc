@@ -520,10 +520,10 @@ svc_vc_rendezvous(SVCXPRT *xprt)
 	newxprt->xp_parent = xprt;
 	if (xprt->xp_dispatch.rendezvous_cb(newxprt)
 	 || svc_rqst_xprt_register(newxprt, xprt)) {
+		// Note xp_parent is released in svc_vc_destroy_task
 		SVC_DESTROY(newxprt);
 		/* Was never added to epoll */
 		SVC_RELEASE(newxprt, SVC_RELEASE_FLAG_NONE);
-		SVC_RELEASE(xprt, SVC_RELEASE_FLAG_NONE);
 		return (XPRT_DESTROYED);
 	}
 	
@@ -541,30 +541,56 @@ svc_vc_destroy_task(struct work_pool_entry *wpe)
 	struct rpc_dplx_rec *rec =
 			opr_containerof(wpe, struct rpc_dplx_rec, ioq.ioq_wpe);
 	uint16_t xp_flags;
+	bool close_fd = false;
 
+	const int32_t xp_refcnt = atomic_fetch_int32_t(&rec->xprt.xp_refcnt);
 	__warnx(TIRPC_DEBUG_FLAG_REFCNT,
 		"%s() %p fd %d xp_refcnt %" PRId32,
-		__func__, rec, rec->xprt.xp_fd, rec->xprt.xp_refcnt);
+		__func__, rec, rec->xprt.xp_fd, xp_refcnt);
 
-	if (rec->xprt.xp_refcnt) {
+	if (xp_refcnt > 0) {
 		/* instead of nanosleep */
 		work_pool_submit(&svc_work_pool, &(rec->ioq.ioq_wpe));
 		return;
+	} else if (unlikely(xp_refcnt < 0)) {
+		__warnx(TIRPC_DEBUG_FLAG_ERROR,
+			"%s() negative refcnt: %p fd %d xp_refcnt %" PRId32,
+			__func__, rec, rec->xprt.xp_fd, xp_refcnt);
+		abort();
 	}
 
 	xp_flags = atomic_postclear_uint16_t_bits(&rec->xprt.xp_flags,
 						  SVC_XPRT_FLAG_CLOSE);
-	if ((xp_flags & SVC_XPRT_FLAG_CLOSE)
-	    && rec->xprt.xp_fd != RPC_ANYFD) {
-		(void)close(rec->xprt.xp_fd);
+	close_fd = ((xp_flags & SVC_XPRT_FLAG_CLOSE) &&
+		rec->xprt.xp_fd != RPC_ANYFD);
+	if (close_fd) {
+		/* Shutting down without releasing the fd, since
+		 * xp_free_user_data() might be using it */
+		(void)shutdown(rec->xprt.xp_fd, SHUT_RDWR);
 		__warnx(TIRPC_DEBUG_FLAG_SVC_VC,
-			"%s: fd %d closed",
+			"%s: fd %d shutdown",
 			 __func__, rec->xprt.xp_fd);
-		rec->xprt.xp_fd = RPC_ANYFD;
+		if (rec->xprt.xp_fd_send != RPC_ANYFD)
+			(void)shutdown(rec->xprt.xp_fd_send, SHUT_RDWR);
 	}
 
 	if (rec->xprt.xp_ops->xp_free_user_data)
 		rec->xprt.xp_ops->xp_free_user_data(&rec->xprt);
+
+	/* Close and reset xprt's FD after the xp_free_user_data call.
+	 * It's safe to release the FD at this point (by calling close), since
+	 * there are no references left to this XPRT. */
+	if (close_fd) {
+		__warnx(TIRPC_DEBUG_FLAG_SVC_VC,
+			"%s: fd %d close",
+			 __func__, rec->xprt.xp_fd);
+		(void)close(rec->xprt.xp_fd);
+		rec->xprt.xp_fd = RPC_ANYFD;
+		if (rec->xprt.xp_fd_send != RPC_ANYFD) {
+			(void)close(rec->xprt.xp_fd_send);
+			rec->xprt.xp_fd_send = RPC_ANYFD;
+		}
+	}
 
 	if (rec->xprt.xp_tp)
 		mem_free(rec->xprt.xp_tp, 0);
@@ -618,6 +644,16 @@ svc_vc_control(SVCXPRT *xprt, const u_int rq, void *in)
 	case SVCSET_XP_FLAGS:
 		xprt->xp_flags = *(u_int *) in;
 		break;
+	case SVCGET_XP_UNREF_USER_DATA:
+		mutex_lock(&ops_lock);
+		*(svc_xprt_void_fun_t *) in = xprt->xp_ops->xp_unref_user_data;
+		mutex_unlock(&ops_lock);
+		break;
+	case SVCSET_XP_UNREF_USER_DATA:
+		mutex_lock(&ops_lock);
+		xprt->xp_ops->xp_unref_user_data = *(svc_xprt_void_fun_t) in;
+		mutex_unlock(&ops_lock);
+		break;
 	case SVCGET_XP_FREE_USER_DATA:
 		mutex_lock(&ops_lock);
 		*(svc_xprt_fun_t *) in = xprt->xp_ops->xp_free_user_data;
@@ -646,6 +682,16 @@ svc_vc_rendezvous_control(SVCXPRT *xprt, const u_int rq, void *in)
 	case SVCSET_CONNMAXREC:
 		xd->sx_dr.maxrec = *(int *)in;
 		break;
+	case SVCGET_XP_UNREF_USER_DATA:
+		mutex_lock(&ops_lock);
+		*(svc_xprt_void_fun_t *) in = xprt->xp_ops->xp_unref_user_data;
+		mutex_unlock(&ops_lock);
+		break;
+	case SVCSET_XP_UNREF_USER_DATA:
+		mutex_lock(&ops_lock);
+		xprt->xp_ops->xp_unref_user_data = *(svc_xprt_void_fun_t) in;
+		mutex_unlock(&ops_lock);
+		break;
 	case SVCGET_XP_FREE_USER_DATA:
 		mutex_lock(&ops_lock);
 		*(svc_xprt_fun_t *) in = xprt->xp_ops->xp_free_user_data;
@@ -669,6 +715,10 @@ svc_vc_stat(SVCXPRT *xprt)
 		return (XPRT_DESTROYED);
 
 	return (XPRT_IDLE);
+}
+
+static bool is_rpc_address_initialized(struct rpc_address* address) {
+	return address->ss.ss_family != 0;
 }
 
 static enum xprt_stat
@@ -781,8 +831,9 @@ again:
 			    rest[1] != PP2_SIG_UINT32_3) {
 				__warnx(TIRPC_DEBUG_FLAG_ERROR,
 					"%s: %p fd %d proxy header failed rest1=%08x rest2=%08x (will set dead)",
-				__func__, xprt, xprt->xp_fd, (int) rest[1], (int) rest[2]);
+				__func__, xprt, xprt->xp_fd, (int) rest[0], (int) rest[1]);
 				SVC_DESTROY(xprt);
+				return SVC_STAT(xprt);
 			}
 
 			rlen = recv(xprt->xp_fd, &s, sizeof(s),
@@ -808,7 +859,8 @@ again:
 				return SVC_STAT(xprt);
 			}
 
-			if (s.ver_cmd == PP2_VERSIOB2_CMD_PROXY) {
+			if (s.ver_cmd == PP2_VERSIOB2_CMD_PROXY &&
+			    !is_rpc_address_initialized(&xprt->xp_proxy)) {
 				if (s.fam == PP2_TRANS_STREAM_FAM_INET) {
 					struct sockaddr_in *ss4;
 
@@ -854,6 +906,20 @@ again:
 				__warnx(TIRPC_DEBUG_FLAG_EVENT,
 					"%s: %p fd %d proxy ignored for local",
 					__func__, xprt, xprt->xp_fd);
+			} else if (is_rpc_address_initialized(
+				&xprt->xp_proxy)) {
+				/* We don't allow more than one proxy protocol
+				  packet. Allowing it will cause a security
+				  vulnerability where at any point the client
+				  could sent a PP packet and change its IP to
+				  circumvent any IP based access rules */
+				__warnx(TIRPC_DEBUG_FLAG_WARN,
+					"%s: %p fd %d got more than one PP"
+					"packet. This is not allowed - "
+					"terminating",
+					__func__, xprt, xprt->xp_fd);
+				SVC_DESTROY(xprt);
+				return SVC_STAT(xprt);
 			} else {
 				__warnx(TIRPC_DEBUG_FLAG_ERROR,
 					"%s: %p fd %d invalid proxy command = %0x2 (will set dead)",
@@ -1127,6 +1193,7 @@ svc_vc_override_ops(SVCXPRT *xprt, SVCXPRT *rendezvous)
 		ops.xp_reply = svc_vc_reply;
 		ops.xp_checksum = svc_vc_checksum;
 		ops.xp_unlink = svc_vc_unlink_it;
+		ops.xp_unref_user_data = NULL;	/* no default */
 		ops.xp_destroy = svc_vc_destroy_it;
 		ops.xp_control = svc_vc_control;
 		ops.xp_free_user_data = NULL;	/* no default */
@@ -1153,6 +1220,7 @@ svc_vc_rendezvous_ops(SVCXPRT *xprt)
 		ops.xp_reply = (svc_req_fun_t)abort;
 		ops.xp_checksum = NULL;		/* not used */
 		ops.xp_unlink = svc_vc_unlink_it;
+		ops.xp_unref_user_data = NULL;	/* no default */
 		ops.xp_destroy = svc_vc_destroy_it;
 		ops.xp_control = svc_vc_rendezvous_control;
 		ops.xp_free_user_data = NULL;	/* no default */

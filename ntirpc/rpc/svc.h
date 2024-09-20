@@ -54,6 +54,7 @@
 #ifdef USE_LTTNG_NTIRPC
 #include "lttng/xprt.h"
 #endif
+#include <unistd.h>
 
 typedef struct svc_xprt SVCXPRT;
 
@@ -107,6 +108,8 @@ enum xprt_stat {
 #define SVCSET_XP_FLAGS         8
 #define SVCGET_XP_FREE_USER_DATA        15
 #define SVCSET_XP_FREE_USER_DATA        16
+#define SVCGET_XP_UNREF_USER_DATA        17
+#define SVCSET_XP_UNREF_USER_DATA        18
 
 /*
  * Operations for rpc_control().
@@ -119,6 +122,7 @@ enum xprt_stat {
 #define RPC_SVC_FDSET_SET       5
 
 typedef enum xprt_stat (*svc_xprt_fun_t) (SVCXPRT *);
+typedef void (*svc_xprt_void_fun_t) (SVCXPRT *);
 typedef struct svc_req *(*svc_xprt_alloc_fun_t) (SVCXPRT *, XDR *);
 typedef void (*svc_xprt_free_fun_t) (struct svc_req *, enum xprt_stat);
 
@@ -160,6 +164,7 @@ typedef struct svc_init_params {
 #define SVC_XPRT_FLAG_DESTROYING	0x0020	/* SVC_DESTROY() was called */
 #define SVC_XPRT_FLAG_RELEASING		0x0040	/* (*xp_destroy) was called */
 #define SVC_XPRT_FLAG_UREG		0x0080
+#define SVC_XPRT_TREE_LOCKED		0x0100
 
 #define SVC_XPRT_FLAG_DESTROYED (SVC_XPRT_FLAG_DESTROYING \
 				| SVC_XPRT_FLAG_RELEASING)
@@ -226,11 +231,17 @@ struct svc_xprt {
 
 		/** Unlink xprt from it's lookup table. */
 		void (*xp_unlink) (SVCXPRT *, u_int, const char *, const int);
+
 		/** actually destroy after xp_destroy_it and xp_release_it */
 		void (*xp_destroy) (SVCXPRT *, u_int, const char *, const int);
 
 		/** catch-all function */
 		bool (*xp_control) (SVCXPRT *, const u_int, void *);
+
+		/** Remove references: of xprt from user-data, and of user-data
+		 * from xprt.
+		 */
+		svc_xprt_void_fun_t xp_unref_user_data;
 
 		/** free client user data */
 		svc_xprt_fun_t xp_free_user_data;
@@ -417,6 +428,12 @@ static inline void svc_ref_it(SVCXPRT *xprt, u_int flags,
 #define SVC_REF(xprt, flags)						\
 	svc_ref_it(xprt, flags, __func__, __LINE__)
 
+/*
+ * Socket to use on svcxxx_ncreate call to get default socket
+ */
+#define RPC_ANYSOCK -1
+#define RPC_ANYFD RPC_ANYSOCK
+
 /* SVC_RELEASE() the SVC_REF().
  * Idempotent SVC_XPRT_FLAG_DESTROYED (bit SVC_XPRT_FLAG_RELEASING)
  * indicates that more references should not be taken.
@@ -458,6 +475,7 @@ static inline void svc_release_it(SVCXPRT *xprt, u_int flags,
 #define SVC_RELEASE(xprt, flags)					\
 	svc_release_it(xprt, flags, __func__, __LINE__)
 
+#define SVC_DESTROY_RETRY 10
 /* SVC_DESTROY() is SVC_RELEASE() with once-only semantics.
  * Idempotent SVC_XPRT_FLAG_DESTROYED (bit SVC_XPRT_FLAG_DESTROYING)
  * indicates that more references should not be taken.
@@ -465,6 +483,7 @@ static inline void svc_release_it(SVCXPRT *xprt, u_int flags,
 static inline void svc_destroy_it(SVCXPRT *xprt,
 				  const char *tag, const int line)
 {
+	int retry;
 	uint16_t flags = atomic_postset_uint16_t_bits(&xprt->xp_flags,
 						      SVC_XPRT_FLAG_DESTROYING);
 
@@ -479,8 +498,35 @@ static inline void svc_destroy_it(SVCXPRT *xprt,
 		return;
 	}
 
+	/* A newly created xprt will be 1. inserted into the tree
+	 * of svc_xprt_fd, then 2. get xp_ops initialized. But if
+	 * shutdown happens in between, xprt without xp_ops initialization
+	 * will be in the tree of svc_xprt_fd for destroying.
+	 * Since the initialization of xp_ops will not acuqire the
+	 * current held lock, try RETRY here to wait for the
+	 * initialization to be done
+	 */
+	retry = 0;
+	while (xprt->xp_ops == NULL && retry < SVC_DESTROY_RETRY) {
+		sched_yield();
+		retry += 1;
+	};
+
 	/* unlink before dropping last ref */
 	(*(xprt)->xp_ops->xp_unlink)(xprt, flags, tag, line);
+
+	/* Remove references: of xprt from user-data; of user-data from xprt */
+	if ((xprt)->xp_ops->xp_unref_user_data) {
+		(*(xprt)->xp_ops->xp_unref_user_data)(xprt);
+	}
+
+	/* Let's shutdown the sockets so that FIN-ACK could be sent to the
+	 * client immediately. */
+	if (xprt->xp_fd != RPC_ANYFD) {
+		(void)shutdown(xprt->xp_fd, SHUT_RDWR);
+		if (xprt->xp_fd_send != RPC_ANYFD)
+			(void)shutdown(xprt->xp_fd_send, SHUT_RDWR);
+	}
 
 	svc_release_it(xprt, SVC_RELEASE_FLAG_NONE, tag, line);
 }
@@ -591,11 +637,7 @@ __END_DECLS
 __BEGIN_DECLS
 extern void rpctest_service(void);
 __END_DECLS
-/*
- * Socket to use on svcxxx_ncreate call to get default socket
- */
-#define RPC_ANYSOCK -1
-#define RPC_ANYFD RPC_ANYSOCK
+
 /*
  * Usual sizes for svcxxx_ncreate
  */
