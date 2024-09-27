@@ -541,7 +541,6 @@ svc_vc_destroy_task(struct work_pool_entry *wpe)
 	struct rpc_dplx_rec *rec =
 			opr_containerof(wpe, struct rpc_dplx_rec, ioq.ioq_wpe);
 	uint16_t xp_flags;
-	bool close_fd = false;
 
 	const int32_t xp_refcnt = atomic_fetch_int32_t(&rec->xprt.xp_refcnt);
 	__warnx(TIRPC_DEBUG_FLAG_REFCNT,
@@ -561,36 +560,17 @@ svc_vc_destroy_task(struct work_pool_entry *wpe)
 
 	xp_flags = atomic_postclear_uint16_t_bits(&rec->xprt.xp_flags,
 						  SVC_XPRT_FLAG_CLOSE);
-	close_fd = ((xp_flags & SVC_XPRT_FLAG_CLOSE) &&
-		rec->xprt.xp_fd != RPC_ANYFD);
-	if (close_fd) {
-		/* Shutting down without releasing the fd, since
-		 * xp_free_user_data() might be using it */
-		(void)shutdown(rec->xprt.xp_fd, SHUT_RDWR);
+	if ((xp_flags & SVC_XPRT_FLAG_CLOSE)
+	    && rec->xprt.xp_fd != RPC_ANYFD) {
+		(void)close(rec->xprt.xp_fd);
 		__warnx(TIRPC_DEBUG_FLAG_SVC_VC,
-			"%s: fd %d shutdown",
+			"%s: fd %d closed",
 			 __func__, rec->xprt.xp_fd);
-		if (rec->xprt.xp_fd_send != RPC_ANYFD)
-			(void)shutdown(rec->xprt.xp_fd_send, SHUT_RDWR);
+		rec->xprt.xp_fd = RPC_ANYFD;
 	}
 
 	if (rec->xprt.xp_ops->xp_free_user_data)
 		rec->xprt.xp_ops->xp_free_user_data(&rec->xprt);
-
-	/* Close and reset xprt's FD after the xp_free_user_data call.
-	 * It's safe to release the FD at this point (by calling close), since
-	 * there are no references left to this XPRT. */
-	if (close_fd) {
-		__warnx(TIRPC_DEBUG_FLAG_SVC_VC,
-			"%s: fd %d close",
-			 __func__, rec->xprt.xp_fd);
-		(void)close(rec->xprt.xp_fd);
-		rec->xprt.xp_fd = RPC_ANYFD;
-		if (rec->xprt.xp_fd_send != RPC_ANYFD) {
-			(void)close(rec->xprt.xp_fd_send);
-			rec->xprt.xp_fd_send = RPC_ANYFD;
-		}
-	}
 
 	if (rec->xprt.xp_tp)
 		mem_free(rec->xprt.xp_tp, 0);
@@ -644,16 +624,6 @@ svc_vc_control(SVCXPRT *xprt, const u_int rq, void *in)
 	case SVCSET_XP_FLAGS:
 		xprt->xp_flags = *(u_int *) in;
 		break;
-	case SVCGET_XP_UNREF_USER_DATA:
-		mutex_lock(&ops_lock);
-		*(svc_xprt_void_fun_t *) in = xprt->xp_ops->xp_unref_user_data;
-		mutex_unlock(&ops_lock);
-		break;
-	case SVCSET_XP_UNREF_USER_DATA:
-		mutex_lock(&ops_lock);
-		xprt->xp_ops->xp_unref_user_data = *(svc_xprt_void_fun_t) in;
-		mutex_unlock(&ops_lock);
-		break;
 	case SVCGET_XP_FREE_USER_DATA:
 		mutex_lock(&ops_lock);
 		*(svc_xprt_fun_t *) in = xprt->xp_ops->xp_free_user_data;
@@ -681,16 +651,6 @@ svc_vc_rendezvous_control(SVCXPRT *xprt, const u_int rq, void *in)
 		break;
 	case SVCSET_CONNMAXREC:
 		xd->sx_dr.maxrec = *(int *)in;
-		break;
-	case SVCGET_XP_UNREF_USER_DATA:
-		mutex_lock(&ops_lock);
-		*(svc_xprt_void_fun_t *) in = xprt->xp_ops->xp_unref_user_data;
-		mutex_unlock(&ops_lock);
-		break;
-	case SVCSET_XP_UNREF_USER_DATA:
-		mutex_lock(&ops_lock);
-		xprt->xp_ops->xp_unref_user_data = *(svc_xprt_void_fun_t) in;
-		mutex_unlock(&ops_lock);
 		break;
 	case SVCGET_XP_FREE_USER_DATA:
 		mutex_lock(&ops_lock);
@@ -1193,7 +1153,6 @@ svc_vc_override_ops(SVCXPRT *xprt, SVCXPRT *rendezvous)
 		ops.xp_reply = svc_vc_reply;
 		ops.xp_checksum = svc_vc_checksum;
 		ops.xp_unlink = svc_vc_unlink_it;
-		ops.xp_unref_user_data = NULL;	/* no default */
 		ops.xp_destroy = svc_vc_destroy_it;
 		ops.xp_control = svc_vc_control;
 		ops.xp_free_user_data = NULL;	/* no default */
@@ -1220,7 +1179,6 @@ svc_vc_rendezvous_ops(SVCXPRT *xprt)
 		ops.xp_reply = (svc_req_fun_t)abort;
 		ops.xp_checksum = NULL;		/* not used */
 		ops.xp_unlink = svc_vc_unlink_it;
-		ops.xp_unref_user_data = NULL;	/* no default */
 		ops.xp_destroy = svc_vc_destroy_it;
 		ops.xp_control = svc_vc_rendezvous_control;
 		ops.xp_free_user_data = NULL;	/* no default */

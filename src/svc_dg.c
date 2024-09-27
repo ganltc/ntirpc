@@ -498,9 +498,6 @@ svc_dg_destroy_task(struct work_pool_entry *wpe)
 	    && rec->xprt.xp_fd != RPC_ANYFD) {
 		(void)close(rec->xprt.xp_fd);
 		rec->xprt.xp_fd = RPC_ANYFD;
-		if (rec->xprt.xp_fd_send != RPC_ANYFD)
-			close(rec->xprt.xp_fd_send);
-		rec->xprt.xp_fd_send = RPC_ANYFD;
 	}
 
 	if (rec->xprt.xp_ops->xp_free_user_data)
@@ -564,16 +561,6 @@ svc_dg_control(SVCXPRT *xprt, const u_int rq, void *in)
 	case SVCSET_XP_FLAGS:
 		xprt->xp_flags = *(u_int *) in;
 		break;
-	case SVCGET_XP_UNREF_USER_DATA:
-		mutex_lock(&ops_lock);
-		*(svc_xprt_void_fun_t *) in = xprt->xp_ops->xp_unref_user_data;
-		mutex_unlock(&ops_lock);
-		break;
-	case SVCSET_XP_UNREF_USER_DATA:
-		mutex_lock(&ops_lock);
-		xprt->xp_ops->xp_unref_user_data = *(svc_xprt_void_fun_t) in;
-		mutex_unlock(&ops_lock);
-		break;
 	case SVCGET_XP_FREE_USER_DATA:
 		mutex_lock(&ops_lock);
 		*(svc_xprt_fun_t *) in = xprt->xp_ops->xp_free_user_data;
@@ -608,7 +595,6 @@ svc_dg_override_ops(SVCXPRT *xprt, SVCXPRT *rendezvous)
 		ops.xp_reply = svc_dg_reply;
 		ops.xp_checksum = svc_dg_checksum;
 		ops.xp_unlink = svc_dg_unlink_it;
-		ops.xp_unref_user_data = NULL;	/* no default */
 		ops.xp_destroy = svc_dg_destroy_it;
 		ops.xp_control = svc_dg_control;
 		ops.xp_free_user_data = NULL;	/* no default */
@@ -634,7 +620,6 @@ svc_dg_rendezvous_ops(SVCXPRT *xprt)
 		ops.xp_reply = (svc_req_fun_t)abort;
 		ops.xp_checksum = NULL;		/* not used */
 		ops.xp_unlink = svc_dg_unlink_it;
-		ops.xp_unref_user_data = NULL;	/* no default */
 		ops.xp_destroy = svc_dg_destroy_it;
 		ops.xp_control = svc_dg_control;
 		ops.xp_free_user_data = NULL;	/* no default */
