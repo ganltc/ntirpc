@@ -58,6 +58,7 @@
 #include <urcu-bp.h>
 
 #include <rpc/work_pool.h>
+#include <assert.h>
 
 #define WORK_POOL_STACK_SIZE MAX(1 * 1024 * 1024, PTHREAD_STACK_MIN)
 #define WORK_POOL_TIMEOUT_MS (31 /* seconds (prime) */ * 1000)
