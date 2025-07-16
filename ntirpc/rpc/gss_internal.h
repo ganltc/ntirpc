@@ -72,7 +72,7 @@ typedef gss_union_ctx_id_desc *gss_union_ctx_id_t;
  * Due to the way we store the sequence window mask, this number MUST always
  * be a multiple of CHAR_BIT.
  */
-#define SVC_GSS_SEQ_WIN 256
+#define SVC_GSS_SEQ_WIN 1024
 
 /* We additionally maintain an internal sequence window, that is double the
  * size of the sequence window that is published to the client. This is done
