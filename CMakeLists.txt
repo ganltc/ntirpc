@@ -77,7 +77,7 @@ if (USE_GSS)
   endif(KRB5_FOUND)
 endif (USE_GSS)
 
-option(USE_MONITORING "Enable monitoring stack" ON)
+option(USE_MONITORING "Enable monitoring stack" OFF)
 
 option(PROXY_PROTOCOL_PARSE_COMMON_NETWORK_ID "Enable parsing of common network id from haproxy TLV" OFF)
 
